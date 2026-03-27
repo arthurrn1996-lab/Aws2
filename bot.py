@@ -259,4 +259,51 @@ def processar_chat_lottu(video_id: str, handle: str):
 
                     cargo = "👑 [VIP]" if is_vip else "👤 [Membro]"
                     secao_links = "\n".join(f"   🔗 {lk}" for lk in set(links_vis + links_brutos))
-                    txt_links = f"\n\n🌐 **Link
+                    txt_links = f"\n\n🌐 **Link(s) Completo(s):**\n{secao_links}" if secao_links else ""
+
+                    alerta = (
+                        f"🚨 **LOTTU / GORJETA DETECTADA** 🚨\n\n"
+                        f"📺 **Canal:** `{handle}`\n"
+                        f"👤 **Autor:** {autor} {cargo}\n"
+                        f"💬 **MSG:** `{msg_visual[:150]}`"
+                        f"{txt_links}\n\n"
+                        f"📡 [Abrir Live](https://www.youtube.com/watch?v={video_id})"
+                    )
+                    enviar_para_discord(alerta)
+    except Exception as e:
+        log.error(f"Erro em {handle}: {e}")
+    finally:
+        with lock_lottu:
+            threads_lottu.pop(handle, None)
+            cooldown_lottu[handle] = time.time() + 30 
+        log.info(f"⭕ LOTTU DESCONECTADO: {handle}")
+
+def loop_youtube_lottu():
+    while True:
+        agora = time.time()
+        for handle in CANAIS_LOTTU:
+            with lock_lottu:
+                if handle in threads_lottu or (handle in cooldown_lottu and agora < cooldown_lottu[handle]): continue
+            v_id = buscar_id_da_live(handle)
+            if v_id:
+                with lock_lottu: threads_lottu[handle] = v_id
+                threading.Thread(target=processar_chat_lottu, args=(v_id, handle), daemon=True).start()
+        time.sleep(60)
+
+# =============================================================================
+# INICIALIZAÇÃO DO SUPER ROBÔ (3 MOTORES SIMULTÂNEOS)
+# =============================================================================
+if __name__ == "__main__":
+    enviar_para_discord("🚀 **SUPER ROBÔ HYBRID (V2 Turbo) ONLINE NA AWS!**")
+    
+    # Inicia o motor do Telegram (Roda paralelo sem bloquear)
+    threading.Thread(target=loop_telegram_betboom, daemon=True).start()
+    
+    # Inicia o motor do YouTube Lottu
+    threading.Thread(target=loop_youtube_lottu, daemon=True).start()
+    
+    # Inicia o motor do YouTube BetBoom no fluxo principal para manter o script vivo
+    try:
+        loop_youtube_betboom()
+    except KeyboardInterrupt:
+        sys.exit(0)
