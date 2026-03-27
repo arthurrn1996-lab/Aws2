@@ -9,7 +9,6 @@ import json
 import os
 from collections import deque
 from urllib.parse import unquote
-from http.server import BaseHTTPRequestHandler, HTTPServer
 
 # =============================================================================
 # PATCH GLOBAL PARA O PYTCHAT (ANTI-QUEDA YOUTUBE)
@@ -49,7 +48,8 @@ CANAIS_LOTTU = [
     "@BIASLOTSOFICIAL", "@gabzbet", "@LuquEt4", "@OZezii", "@WEEDZERATV", 
     "@cerol", "@SORTENOSLOT-PriSimões", "@tonhmiller", "@Bluyd777",
     "@felipekersch", "@oEduhzao", "@NobruTV", "@caiopericinoto",
-    "@nervosawin", "@TocadasOficiall", "@LanaGamerlive", "@SequelaxXx"
+    "@nervosawin", "@TocadasOficiall", "@LanaGamerlive", "@SequelaxXx",
+    "@Rachaxp"
 ]
 
 # =============================================================================
@@ -134,11 +134,16 @@ def enviar_discord_betboom(dado, canal, tipo="link", desc=""):
     enviar_para_discord(msg)
 
 def loop_telegram_betboom():
-    log.info("📡 Radar do Telegram BetBoom iniciado!")
+    log.info("📡 Radar do Telegram BetBoom iniciado! (Visão Raio-X)")
     while True:
         try:
-            url = "https://t.me/s/betboombra"
-            html = requests.get(url, headers={'User-Agent': 'Mozilla/5.0'}, timeout=10).text
+            url = f"https://t.me/s/betboombra?nocache={time.time()}"
+            headers = {
+                'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64)',
+                'Cache-Control': 'no-cache',
+                'Pragma': 'no-cache'
+            }
+            html = requests.get(url, headers=headers, timeout=5).text
             mensagens = html.split('tgme_widget_message ')[1:]
             
             for msg_html in mensagens:
@@ -148,7 +153,7 @@ def loop_telegram_betboom():
                     texto_limpo = re.sub(r'<[^>]+>', '', re.sub(r'<br\s*/?>', '\n', match_texto.group(1))).strip()
                     resumo = texto_limpo[:150] + "..." if len(texto_limpo) > 150 else texto_limpo
                 
-                urls = re.findall(r'(https?://(?:l\.)?betboom\.bet(?:\.br)?/[a-zA-Z0-9_/?=-]+)', msg_html, re.IGNORECASE)
+                urls = re.findall(r'(https?://[^\s]*betboom[^\s]*)', msg_html, re.IGNORECASE)
                 cupons = re.findall(r'(?i)cupom\s*:?\s*([a-zA-Z0-9]{5,15})', texto_limpo) if texto_limpo else []
                 
                 for link in urls:
@@ -162,20 +167,24 @@ def loop_telegram_betboom():
                     if cp not in sorteios_ja_pegos_betboom:
                         sorteios_ja_pegos_betboom.add(cp)
                         enviar_discord_betboom(cp, "Telegram @betboombra", "cupom", resumo)
-        except: pass
-        time.sleep(15) # Checa o telegram a cada 15 segundos
+        except Exception as e: 
+            pass
+        time.sleep(3) # Ciclo agressivo de 3 segundos
 
 def processar_chat_betboom(video_id: str, handle: str):
     log.info(f"🟡 BETBOOM CONECTADO: {handle}")
     try:
-        chat = pytchat.create(video_id=video_id, processor=LeitorCodigoFonte(), interruptable=False)
+        # topchat_only=False ignora filtro de spam do YouTube
+        chat = pytchat.create(video_id=video_id, processor=LeitorCodigoFonte(), interruptable=False, topchat_only=False)
         while chat.is_alive():
             dados = chat.get()
             if not dados: continue
             
             for raw_item in dados:
                 texto_puro = unquote(json.dumps(raw_item)).replace('\\/', '/').replace('"', ' ').replace('\\n', ' ')
-                urls = re.findall(r'(https?://(?:l\.)?betboom\.bet(?:\.br)?/[a-zA-Z0-9_/?=-]+)', texto_puro, re.IGNORECASE)
+                
+                # Regex predatório
+                urls = re.findall(r'(https?://[^\s]*betboom[^\s]*)', texto_puro, re.IGNORECASE)
                 cupons = re.findall(r'(?i)cupom\s*:?\s*([a-zA-Z0-9]{5,15})', texto_puro)
                 
                 for link in urls:
@@ -189,8 +198,8 @@ def processar_chat_betboom(video_id: str, handle: str):
                     if cp not in sorteios_ja_pegos_betboom:
                         sorteios_ja_pegos_betboom.add(cp)
                         enviar_discord_betboom(cp, handle, "cupom", "")
-            time.sleep(1)
-    except: pass
+    except Exception as e:
+        log.error(f"Erro em {handle}: {e}")
     finally:
         with lock_bb:
             threads_bb.pop(handle, None)
@@ -228,7 +237,8 @@ def checar_mensagem_lottu(texto: str, is_vip: bool):
 def processar_chat_lottu(video_id: str, handle: str):
     log.info(f"🟢 LOTTU CONECTADO: {handle}")
     try:
-        chat = pytchat.create(video_id=video_id, processor=LeitorCodigoFonte(), interruptable=False)
+        # Modo visão noturna ativado: sem filtro anti-spam
+        chat = pytchat.create(video_id=video_id, processor=LeitorCodigoFonte(), interruptable=False, topchat_only=False)
         while chat.is_alive():
             dados = chat.get()
             if not dados: continue
@@ -249,51 +259,4 @@ def processar_chat_lottu(video_id: str, handle: str):
 
                     cargo = "👑 [VIP]" if is_vip else "👤 [Membro]"
                     secao_links = "\n".join(f"   🔗 {lk}" for lk in set(links_vis + links_brutos))
-                    txt_links = f"\n\n🌐 **Link(s) Completo(s):**\n{secao_links}" if secao_links else ""
-
-                    alerta = (
-                        f"🚨 **LOTTU / GORJETA DETECTADA** 🚨\n\n"
-                        f"📺 **Canal:** `{handle}`\n"
-                        f"👤 **Autor:** {autor} {cargo}\n"
-                        f"💬 **MSG:** `{msg_visual[:150]}`"
-                        f"{txt_links}\n\n"
-                        f"📡 [Abrir Live](https://www.youtube.com/watch?v={video_id})"
-                    )
-                    enviar_para_discord(alerta)
-            time.sleep(1)
-    except: pass
-    finally:
-        with lock_lottu:
-            threads_lottu.pop(handle, None)
-            cooldown_lottu[handle] = time.time() + 30 
-        log.info(f"⭕ LOTTU DESCONECTADO: {handle}")
-
-def loop_youtube_lottu():
-    while True:
-        agora = time.time()
-        for handle in CANAIS_LOTTU:
-            with lock_lottu:
-                if handle in threads_lottu or (handle in cooldown_lottu and agora < cooldown_lottu[handle]): continue
-            v_id = buscar_id_da_live(handle)
-            if v_id:
-                with lock_lottu: threads_lottu[handle] = v_id
-                threading.Thread(target=processar_chat_lottu, args=(v_id, handle), daemon=True).start()
-        time.sleep(60)
-
-# =============================================================================
-# INICIALIZAÇÃO DO SUPER ROBÔ (3 MOTORES SIMULTÂNEOS)
-# =============================================================================
-if __name__ == "__main__":
-    enviar_para_discord("🚀 **SUPER ROBÔ HYBRID (BetBoom + Lottu) ONLINE NA AWS!**")
-    
-    # Inicia o motor do Telegram (Roda paralelo sem bloquear)
-    threading.Thread(target=loop_telegram_betboom, daemon=True).start()
-    
-    # Inicia o motor do YouTube Lottu
-    threading.Thread(target=loop_youtube_lottu, daemon=True).start()
-    
-    # Inicia o motor do YouTube BetBoom no fluxo principal para manter o script vivo
-    try:
-        loop_youtube_betboom()
-    except KeyboardInterrupt:
-        sys.exit(0)
+                    txt_links = f"\n\n🌐 **Link
