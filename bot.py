@@ -81,6 +81,9 @@ def eh_duplicado(chave, ttl_segundos=300):
 class LeitorCodigoFonte:
     def process(self, chat_components):
         return chat_components
+        
+    def finalize(self):
+        pass
 
 def enviar_para_discord(texto: str) -> bool:
     payload = {"content": texto}
