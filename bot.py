@@ -2,11 +2,11 @@ import pytchat
 import requests
 import re
 import time
-import threading
 import sys
 import logging
 import json
 from urllib.parse import unquote
+from multiprocessing import Process
 
 # =============================================================================
 # CONFIG
@@ -43,47 +43,37 @@ logging.basicConfig(
 log = logging.getLogger(__name__)
 
 # =============================================================================
-# ESTADO GLOBAL
+# CACHE (ANTI DUPLICAÇÃO)
 # =============================================================================
 
-threads_ativas = {}
-cooldown_lives = {}
-cache_mensagens = {}
-
-lock_threads = threading.Lock()
-lock_cache = threading.Lock()
-
-# =============================================================================
-# UTIL
-# =============================================================================
+cache = {}
 
 def eh_duplicado(chave, ttl=300):
     agora = time.time()
-    with lock_cache:
-        if chave in cache_mensagens and (agora - cache_mensagens[chave]) < ttl:
-            return True
+    if chave in cache and (agora - cache[chave]) < ttl:
+        return True
+    cache[chave] = agora
 
-        cache_mensagens[chave] = agora
+    if len(cache) > 5000:
+        cache.clear()
 
-        if len(cache_mensagens) > 3000:
-            cache_mensagens.clear()
+    return False
 
-        return False
+# =============================================================================
+# DISCORD
+# =============================================================================
 
-def enviar_para_discord(msg):
+def enviar_discord(msg):
     try:
         requests.post(DISCORD_WEBHOOK_URL, json={"content": msg}, timeout=5)
     except Exception as e:
         log.error(f"Erro Discord: {e}")
 
-def limpar_url(url):
-    return url.rstrip('.,!?;:…"\'()<>[]')
-
 # =============================================================================
-# YOUTUBE LIVE DETECTOR
+# YOUTUBE
 # =============================================================================
 
-def buscar_id_da_live(handle):
+def buscar_live(handle):
     try:
         url = f"https://www.youtube.com/{handle}/live"
         r = requests.get(url, timeout=10)
@@ -97,7 +87,7 @@ def buscar_id_da_live(handle):
             return m.group(1)
 
     except Exception as e:
-        log.error(f"Erro ao buscar live {handle}: {e}")
+        log.error(f"Erro buscar live {handle}: {e}")
 
     return None
 
@@ -127,7 +117,7 @@ def extrair(raw):
         return "", "", "", False
 
 # =============================================================================
-# BETBOOM
+# BETBOOM PROCESS
 # =============================================================================
 
 def processar_betboom(video_id, handle):
@@ -156,15 +146,14 @@ def processar_betboom(video_id, handle):
                     cupons = re.findall(r'cupom[: ]*([a-zA-Z0-9]{5,15})', texto, re.IGNORECASE)
 
                     for u in urls:
-                        link = limpar_url(u[0])
-
+                        link = u[0]
                         if not eh_duplicado(link):
-                            enviar_para_discord(f"💰 BETBOOM\n📺 {handle}\n👤 {autor}\n🔗 {link}")
+                            enviar_discord(f"💰 BETBOOM\n📺 {handle}\n👤 {autor}\n🔗 {link}")
 
                     for c in cupons:
                         c = c.upper()
                         if not eh_duplicado(c):
-                            enviar_para_discord(f"🟡 CUPOM\n📺 {handle}\n👤 {autor}\n🎟 {c}")
+                            enviar_discord(f"🟡 CUPOM\n📺 {handle}\n👤 {autor}\n🎟 {c}")
 
                 except Exception as e:
                     log.error(f"Erro msg BB: {e}")
@@ -172,15 +161,10 @@ def processar_betboom(video_id, handle):
     except Exception as e:
         log.error(f"Erro geral BB: {e}")
 
-    finally:
-        with lock_threads:
-            threads_ativas.pop(f"BB_{handle}", None)
-            cooldown_lives[f"BB_{handle}"] = time.time() + 10
-
-        log.warning(f"⭕ BB CAIU: {handle}")
+    log.warning(f"⭕ BB FINALIZADO: {handle}")
 
 # =============================================================================
-# LOTTU
+# LOTTU PROCESS
 # =============================================================================
 
 def processar_lottu(video_id, handle):
@@ -203,9 +187,8 @@ def processar_lottu(video_id, handle):
                 try:
                     msg_id, autor, msg, vip = extrair(raw)
 
-                    if "http" in msg or vip:
-                        if not eh_duplicado(msg_id):
-                            enviar_para_discord(f"🚨 LOTTU\n📺 {handle}\n👤 {autor}\n💬 {msg}")
+                    if ("http" in msg or vip) and not eh_duplicado(msg_id):
+                        enviar_discord(f"🚨 LOTTU\n📺 {handle}\n👤 {autor}\n💬 {msg}")
 
                 except Exception as e:
                     log.error(f"Erro msg LOTTU: {e}")
@@ -213,51 +196,32 @@ def processar_lottu(video_id, handle):
     except Exception as e:
         log.error(f"Erro geral LOTTU: {e}")
 
-    finally:
-        with lock_threads:
-            threads_ativas.pop(f"LOTTU_{handle}", None)
-            cooldown_lives[f"LOTTU_{handle}"] = time.time() + 10
-
-        log.warning(f"⭕ LOTTU CAIU: {handle}")
+    log.warning(f"⭕ LOTTU FINALIZADO: {handle}")
 
 # =============================================================================
-# ORQUESTRADOR
+# ORQUESTRADOR (PROCESSOS)
 # =============================================================================
+
+processos = {}
 
 def monitor():
     while True:
         try:
-            agora = time.time()
-
             for h in CANAIS_BETBOOM:
-                chave = f"BB_{h}"
-
-                with lock_threads:
-                    if chave in threads_ativas or (chave in cooldown_lives and agora < cooldown_lives[chave]):
-                        continue
-
-                vid = buscar_id_da_live(h)
-
-                if vid:
-                    with lock_threads:
-                        threads_ativas[chave] = True
-
-                    threading.Thread(target=processar_betboom, args=(vid, h), daemon=True).start()
+                if h not in processos or not processos[h].is_alive():
+                    vid = buscar_live(h)
+                    if vid:
+                        p = Process(target=processar_betboom, args=(vid, h))
+                        p.start()
+                        processos[h] = p
 
             for h in CANAIS_LOTTU:
-                chave = f"LOTTU_{h}"
-
-                with lock_threads:
-                    if chave in threads_ativas or (chave in cooldown_lives and agora < cooldown_lives[chave]):
-                        continue
-
-                vid = buscar_id_da_live(h)
-
-                if vid:
-                    with lock_threads:
-                        threads_ativas[chave] = True
-
-                    threading.Thread(target=processar_lottu, args=(vid, h), daemon=True).start()
+                if h not in processos or not processos[h].is_alive():
+                    vid = buscar_live(h)
+                    if vid:
+                        p = Process(target=processar_lottu, args=(vid, h))
+                        p.start()
+                        processos[h] = p
 
         except Exception as e:
             log.error(f"Erro monitor: {e}")
@@ -269,5 +233,5 @@ def monitor():
 # =============================================================================
 
 if __name__ == "__main__":
-    log.info("🚀 BOT INICIADO (VERSÃO ESTÁVEL)")
+    log.info("🚀 BOT INICIADO (VERSÃO FINAL ESTÁVEL)")
     monitor()
