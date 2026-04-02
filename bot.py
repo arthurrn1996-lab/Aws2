@@ -1,3 +1,4 @@
+import ssl
 import pytchat
 import requests
 import httpx
@@ -10,32 +11,58 @@ import json
 from urllib.parse import unquote
 
 # =============================================================================
-# PATCH GLOBAL PARA REQUESTS E HTTPX (A VERDADEIRA BLINDAGEM ANTI-YOUTUBE)
+# 🇩🇪 ENGENHARIA ALEMÃ: SPOOFING DE TLS E HEADERS CHROME (NÍVEL EXTREMO)
 # =============================================================================
-# 1. Patch para o Requests (Usado para buscar o ID da live)
-if not hasattr(requests.Session, '_patch_aplicado'):
+# 1. SSL Context "Porsche" - Imita a criptografia exata de um navegador real
+try:
+    ctx = ssl.create_default_context()
+    ctx.options |= ssl.OP_NO_SSLv2 | ssl.OP_NO_SSLv3 | ssl.OP_NO_TLSv1 | ssl.OP_NO_TLSv1_1
+    ctx.set_alpn_protocols(['h2', 'http/1.1'])
+    ctx.set_ciphers("TLS_AES_128_GCM_SHA256:TLS_AES_256_GCM_SHA384:TLS_CHACHA20_POLY1305_SHA256:ECDHE-ECDSA-AES128-GCM-SHA256:ECDHE-RSA-AES128-GCM-SHA256")
+except:
+    ctx = None # Fallback de segurança
+
+# 2. Patch Profundo do Motor HTTPX (O coração do Pytchat)
+if not hasattr(httpx.Client, '_patch_alemao'):
+    original_client_init = httpx.Client.__init__
+    def patched_client_init(self, *args, **kwargs):
+        if ctx: kwargs['verify'] = ctx
+        kwargs['http2'] = True
+        original_client_init(self, *args, **kwargs)
+    httpx.Client.__init__ = patched_client_init
+    
+    original_httpx_send = httpx.Client.send
+    def patched_httpx_send(self, request, *args, **kwargs):
+        if "youtube.com" in str(request.url) or "ytimg.com" in str(request.url):
+            # Assinatura PERFEITA do Chrome 124
+            request.headers["User-Agent"] = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36"
+            request.headers["Accept-Language"] = "pt-BR,pt;q=0.9,en-US;q=0.8,en;q=0.7"
+            request.headers["Sec-Ch-Ua"] = '"Chromium";v="124", "Google Chrome";v="124", "Not-A.Brand";v="99"'
+            request.headers["Sec-Ch-Ua-Mobile"] = "?0"
+            request.headers["Sec-Ch-Ua-Platform"] = '"Windows"'
+            request.headers["Sec-Fetch-Dest"] = "empty"
+            request.headers["Sec-Fetch-Mode"] = "cors"
+            request.headers["Sec-Fetch-Site"] = "same-origin"
+            request.headers["Origin"] = "https://www.youtube.com"
+            request.headers["Cookie"] = "CONSENT=YES+cb.20210328-17-p0.en+FX+478; SOCS=CAI; PREF=tz=America.Sao_Paulo;"
+        return original_httpx_send(self, request, *args, **kwargs)
+    httpx.Client.send = patched_httpx_send
+    httpx.Client._patch_alemao = True
+
+# 3. Patch para a Busca de ID (Requests)
+if not hasattr(requests.Session, '_patch_alemao'):
     original_session_request = requests.Session.request
     def patched_session_request(self, method, url, *args, **kwargs):
         if "youtube.com" in url or "ytimg.com" in url:
             headers = kwargs.get('headers', {})
-            headers = dict(headers)
-            headers["Cookie"] = "CONSENT=YES+cb.20210328-17-p0.en+FX+478; SOCS=CAI;"
-            headers["User-Agent"] = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36"
+            headers.update({
+                "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36",
+                "Cookie": "CONSENT=YES+cb.20210328-17-p0.en+FX+478; SOCS=CAI;"
+            })
             kwargs['headers'] = headers
         return original_session_request(self, method, url, *args, **kwargs)
     requests.Session.request = patched_session_request
-    requests.Session._patch_aplicado = True 
-
-# 2. Patch para o HTTPX (O verdadeiro motor do pytchat que estava caindo)
-if not hasattr(httpx.Client, '_patch_aplicado'):
-    original_httpx_send = httpx.Client.send
-    def patched_httpx_send(self, request, *args, **kwargs):
-        if "youtube.com" in str(request.url) or "ytimg.com" in str(request.url):
-            request.headers["User-Agent"] = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36"
-            request.headers["Cookie"] = "CONSENT=YES+cb.20210328-17-p0.en+FX+478; SOCS=CAI;"
-        return original_httpx_send(self, request, *args, **kwargs)
-    httpx.Client.send = patched_httpx_send
-    httpx.Client._patch_aplicado = True
+    requests.Session._patch_alemao = True 
 
 # =============================================================================
 # CONFIGURAÇÕES GLOBAIS
@@ -57,14 +84,11 @@ CANAIS_LOTTU = [
     "@Rachaxp"
 ]
 
-# =============================================================================
-# CONTROLES GLOBAIS E LOGS
-# =============================================================================
 logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] %(message)s", datefmt="%H:%M:%S", handlers=[logging.StreamHandler(sys.stdout)])
 log = logging.getLogger(__name__)
 logging.getLogger("urllib3").setLevel(logging.WARNING)
 logging.getLogger("requests").setLevel(logging.WARNING)
-logging.getLogger("httpx").setLevel(logging.WARNING) # Silencia os erros vermelhos na tela
+logging.getLogger("httpx").setLevel(logging.WARNING) 
 
 threads_ativas = {}
 cooldown_lives = {}
@@ -75,8 +99,7 @@ lock_cache = threading.Lock()
 def eh_duplicado(chave, ttl_segundos=300):
     agora = time.time()
     with lock_cache:
-        if chave in cache_mensagens and (agora - cache_mensagens[chave]) < ttl_segundos:
-            return True
+        if chave in cache_mensagens and (agora - cache_mensagens[chave]) < ttl_segundos: return True
         cache_mensagens[chave] = agora
         if len(cache_mensagens) > 3000:
             remover = [k for k, v in list(cache_mensagens.items()) if (agora - v) >= ttl_segundos]
@@ -84,14 +107,12 @@ def eh_duplicado(chave, ttl_segundos=300):
         return False
 
 class LeitorCodigoFonte:
-    def process(self, chat_components):
-        return chat_components
-    def finalize(self):
-        pass
+    def process(self, chat_components): return chat_components
+    def finalize(self): pass
 
 def enviar_para_discord(texto: str) -> bool:
     payload = {"content": texto}
-    for tentativa in range(3):
+    for _ in range(3):
         try:
             requests.post(DISCORD_WEBHOOK_URL, json=payload, timeout=5)
             return True
@@ -115,8 +136,7 @@ def extrair_dados_visuais(raw_item):
     autor, msg, msg_id, is_vip = "Desconhecido", "", "", False
     try:
         renderer = raw_item.get('addChatItemAction', {}).get('item', {}).get('liveChatTextMessageRenderer', {})
-        if not renderer: 
-            renderer = raw_item.get('addChatItemAction', {}).get('item', {}).get('liveChatPaidMessageRenderer', {})
+        if not renderer: renderer = raw_item.get('addChatItemAction', {}).get('item', {}).get('liveChatPaidMessageRenderer', {})
         if renderer:
             msg_id = renderer.get('id', "")
             autor = renderer.get('authorName', {}).get('simpleText', "Desconhecido")
@@ -127,11 +147,10 @@ def extrair_dados_visuais(raw_item):
     except: pass
     return msg_id, autor, msg, is_vip
 
-def limpar_url(url: str) -> str:
-    return url.rstrip('.,!?;:…"\'()<>[]')
+def limpar_url(url: str) -> str: return url.rstrip('.,!?;:…"\'()<>[]')
 
 # =============================================================================
-# MOTORES (COM RECONEXÃO AGRESSIVA)
+# MOTORES
 # =============================================================================
 def enviar_discord_betboom(dado, canal, tipo="link", desc=""):
     desc_segura = desc.replace('<', '').replace('>', '')
@@ -159,19 +178,18 @@ def processar_chat_betboom(video_id: str, handle: str):
                         m = re.search(r'q=(https?://[^&]+)', unquote(lk))
                         if m: lk = m.group(1)
                     lk = limpar_url(lk)
-                    if not eh_duplicado(f"yt_bb_link_{lk}_{handle}"):
-                        enviar_discord_betboom(lk, handle, "link", f"De: {autor}")
+                    if not eh_duplicado(f"yt_bb_link_{lk}_{handle}"): enviar_discord_betboom(lk, handle, "link", f"De: {autor}")
                 
                 for cp in cupons:
                     cp = cp.upper()
-                    if not eh_duplicado(f"yt_bb_cupom_{cp}_{handle}"):
-                        enviar_discord_betboom(cp, handle, "cupom", f"De: {autor}")
-    except: pass
+                    if not eh_duplicado(f"yt_bb_cupom_{cp}_{handle}"): enviar_discord_betboom(cp, handle, "cupom", f"De: {autor}")
+    except Exception as e:
+        pass
     finally:
         with lock_threads:
             threads_ativas.pop(f"BB_{handle}", None)
-            cooldown_lives[f"BB_{handle}"] = time.time() + 2 # COOLDOWN AGRESSIVO: Apenas 2 segundos cegos
-        log.warning(f"⭕ BB CAIU (Reconectando em 2s): {handle}")
+            cooldown_lives[f"BB_{handle}"] = time.time() + 3 
+        log.warning(f"⭕ BB CAIU (Reconectando em 3s): {handle}")
 
 def processar_chat_lottu(video_id: str, handle: str):
     log.info(f"🟢 LOTTU CONECTADO: {handle}")
@@ -206,11 +224,11 @@ def processar_chat_lottu(video_id: str, handle: str):
     finally:
         with lock_threads:
             threads_ativas.pop(f"LOTTU_{handle}", None)
-            cooldown_lives[f"LOTTU_{handle}"] = time.time() + 2 # COOLDOWN AGRESSIVO: Apenas 2 segundos cegos
-        log.warning(f"⭕ LOTTU CAIU (Reconectando em 2s): {handle}")
+            cooldown_lives[f"LOTTU_{handle}"] = time.time() + 3
+        log.warning(f"⭕ LOTTU CAIU (Reconectando em 3s): {handle}")
 
 # =============================================================================
-# ORQUESTRADOR BLINDADO V2
+# ORQUESTRADOR BLINDADO
 # =============================================================================
 def checar_novas_lives():
     while True:
@@ -234,9 +252,9 @@ def checar_novas_lives():
                     with lock_threads: threads_ativas[chave] = v_id
                     threading.Thread(target=processar_chat_lottu, args=(v_id, handle), daemon=True).start()
         except: pass
-        time.sleep(5) # ORQUESTRADOR ACELERADO: Varre novas conexões a cada 5s (antes era 60s)
+        time.sleep(5)
 
 if __name__ == "__main__":
-    enviar_para_discord("🚀 **BOT MODO BERSERKER ONLINE!**\n🔥 Cooldown zerado: Reconexão em 2s\n🛡️ HTTPX Blindado contra o YouTube")
+    enviar_para_discord("🇩🇪 **ENGENHARIA ALEMÃ ATIVADA!**\n🛡️ Spoofing de TLS e Criptografia do Chrome 124 injetados.")
     try: checar_novas_lives()
     except KeyboardInterrupt: sys.exit(0)
